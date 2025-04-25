@@ -1,7 +1,7 @@
 const EventEmitter = require('events');
 const Net = require('net');
 
-const DEBUG = true;
+const DEBUG = false;
 
 // Класс, обмен данными с конвертером ironLogic Z397-web
 class ILz397web extends EventEmitter {
