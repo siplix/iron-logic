@@ -134,7 +134,7 @@ class ILz397web extends EventEmitter {
           }
         });
         telnet.on('error', (err) => {
-          if(telnetConnected) this.telnet.destroy();
+          if (telnetConnected) this.telnet.destroy();
           resp.error = err.code;
           reject(resp);
         });
@@ -287,7 +287,6 @@ class ILz397web extends EventEmitter {
 
   // парсит пакет с ответом на команду установки текущего времени
   _parseSetTime(data) {
-
     if (DEBUG) debug('FN - _parseSetTime');
 
     return { id: data[3], error: null, responce: { addr: data[5], cmd: 'set_time', data: ['ok'] } };
@@ -522,14 +521,6 @@ class ILz397web extends EventEmitter {
   }
 }
 
-module.exports = ILz397web;
-
-
-
-
-
-
-
 
 if (DEBUG) {
   const iL = new ILz397web('192.168.14.9', 1000, '2B07D1B1');
@@ -642,3 +633,5 @@ if (DEBUG) {
 function debug(...args) {
   console.log(performance.now().toFixed(0), args);
 }
+
+module.exports = ILz397web;
