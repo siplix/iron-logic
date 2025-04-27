@@ -522,6 +522,8 @@ class ILz397web extends EventEmitter {
   }
 }
 
+module.exports = ILz397web;
+
 
 
 
