@@ -114,7 +114,7 @@ class ILz397web extends EventEmitter {
         this._tcpClient = null;
         let telnet = new Net.Socket();
         const inTelnet = [];
-        const telnetConnected = false;
+        let telnetConnected = false;
         telnet.connect(23, this.ip, () => {
           telnetConnected = true;
         });
@@ -162,8 +162,8 @@ class ILz397web extends EventEmitter {
             if (addr) this._send(this._makeOpenDoorPacket(oRequest.id, addr));
             break;
         }
-        this.once('receive', (data) => {
-          resolve(data);
+        this.once('receive', (resp) => {
+          resolve(resp);
         });
         this.once('error', (err) => {
           resp.error = err;
