@@ -5,6 +5,45 @@ const DEBUG = 'demo';
 const DEFAULT_TIMEOUT = 2000; // Таймаут ожидания ответа в мс
 
 // Класс, обмен данными с конвертером ironLogic Z397-web
+/**
+   * Пераметры:
+   *   ip    {string} - IP адресс конвертера
+   *   port  {number} - порт, который слушает конвертер
+   *   key   {string} - ключ авторизации конвертера
+   *
+   * Свойства:
+   *   status  {string} - 'disconnected'/'connecting'/'connected' статус соединения
+   *   enabled {boolean} - включено ли соединение?
+   *
+   * Методы:
+   *   async get() - принимает команду в виде объекта:
+   *    {
+   *      id:           // id запроса от 0 до 255,
+   *      request: {
+   *        addr:       // адрес контроллера или null,
+   *        cmd:        // команда
+   *      }
+   *    }
+   *    Возвращает Promise с объектом вида:
+   *    {
+   *      id:           // id запроса от 0 до 255,
+   *      error:        // ошибка или null,
+   *      responce: {
+   *        addr:       // адрес контроллера или null,
+   *        cmd:        // команда указаная в запросе,
+   *        data:       // непосредственно ответ или null при ошибке
+   *      }
+   *    }
+   *    Команды:
+   *      'connect' - установить подключение к конвертеру, возвращает 'connected'
+   *      'disconnect' - отключиться от конвертера, возвращает 'disconnected'
+   *      'reset' - перезагрузить конвертер, возвращает 'reset'
+   *      'scan' - сканировать шину, возвращает адреса контроллеров в виде массива
+   *      'get_sn' - запрос серийного номера контроллера с адресом addr, возвращает серийный номер
+   *      'get_time' - запрос текущего времени на контроллере с адресом addr, возвращает время в виде UNIX timestamp
+   *      'set_time' - установка времени на контроллере с адресом addr на текущее, возвращает 'ok'
+   *      'open' - открывает замок, возвращает 'ok'
+   */
 class ILz397web extends EventEmitter {
   constructor(ip, port, key) {
     super();
@@ -28,200 +67,211 @@ class ILz397web extends EventEmitter {
   async get(oRequest, timeout = DEFAULT_TIMEOUT) {
     if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - get', oRequest);
 
-    if (oRequest.request.cmd === 'connect') {
-      return new Promise((resolve, reject) => {
-        if (this.status === 'disconnected') {
-          this._init();
-          const onInit = (status) => {
-            this.off('error', onError);
-            this.enabled = true;
-            resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'connect', data: status } });
-          };
-          const onError = (err) => {
-            this.off('init', onInit);
-            const errorMsg = err instanceof Error ? err.message : String(err); // !!!!!!!!!!!!!!!!!!!! Проверь генерацию события 'error' в _init
-            reject(new Error(`Connect failed: ${errorMsg}`));
-          };
-          this.once('init', onInit);
-          this.once('error', onError);
-        } else {
-          reject(new Error('Already connected'));
-        }
-      });
-    }
-
-    if (oRequest.request.cmd === 'disconnect') {
-      return new Promise((resolve, reject) => {
-        if (this.status === 'connected') {
-          const onClose = (status) => {
-            this.off('error', onError);
-            this.enabled = false;
-            this._tcpClient = null;
-            resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'disconnect', data: status } });
-          };
-          const onError = (err) => {
-            this.off('close', onClose);
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            reject(new Error(`Disconnect failed: ${errorMsg}`));
-          };
-          this.once('close', onClose);
-          this.once('error', onError);
-
-          if (this._tcpClient) {
-            this._tcpClient.destroy();
-          } else {
-            onClose('disconnected');
-          }
-        } else {
-          reject(new Error('Already disconnected'));
-        }
-      });
-    }
-
-    if (oRequest.request.cmd === 'reset') {
-      return new Promise((resolve, reject) => {
-        if (!this._tcpClient) {
-          return reject(new Error('Cannot reset when not connected via main protocol'));
-        }
-        // Сохраняем текущий статус, т.к. сокет будет уничтожен !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // const wasConnected = this.status === 'connected';
-        // if(wasConnected) {
-
-        if (this.status === 'connected') {
-          this._tcpClient.destroy();
-          this._tcpClient = null;
-          this.status = 'disconnected';
+    switch (oRequest.request.cmd) {
+      case 'connect':
+        return this._handleConnect(oRequest);
+      case 'disconnect':
+        return this._handleDisconnect(oRequest);
+      case 'reset':
+        return this._handleReset(oRequest, timeout);
+      default:
+        if (this.status !== 'connected') {
+          return Promise.reject(new Error('Not connected'));
         }
 
-        let telnet = new Net.Socket();
-        const inTelnet = [];
-        let resetCommandSent = false;
+        if (oRequest.id < 0x00 || oRequest.id > 0xff) {
+          return Promise.reject(new Error('ID is out of range'));
+        }
 
-        const cleanup = () => {
-          if (telnet) {
-            telnet.destroy();
-            telnet = null;
-          }
-        };
-
-        telnet.connect(23, this.ip, () => {});
-
-        telnet.on('data', (data) => {
-          const dataStr = data.toString();
-          inTelnet.push(dataStr);
-          // Упрощенная логика - может быть ненадёжной
-          if (inTelnet.length === 2 && inTelnet[inTelnet.length - 1] === '> ') {
-            telnet.write(`${this.key}\r\n`);
-          }
-          if (inTelnet.length === 4 && inTelnet[inTelnet.length - 1] === '> ') {
-            if (!resetCommandSent) {
-              telnet.write('rst\r\n');
-              resetCommandSent = true;
-              // Не ждем ответа, предполагаем, что команда отправлена
-              // Закрываем Telnet соединение
-              cleanup();
-              // Даем время на перезагрузку
-              setTimeout(() => {
-                resolve({
-                  id: oRequest.id,
-                  error: null,
-                  responce: { addr: null, cmd: 'reset', data: 'reset initiated' },
-                });
-              }, 3000);
-            }
-          }
-        });
-
-        telnet.on('error', (err) => {
-          cleanup();
-          reject(new Error(`Telnet reset failed: ${err.code || err.message}`));
-        });
-
-        telnet.on('close', () => {
-          // Если соединение закрылось до отправки команды или до резолва - возможно, ошибка
-          if (!resetCommandSent) {
-            // reject(new Error('Telnet connection closed unexpectedly during reset'));
-            // Можно и не реджектить, если закрытие после rst - это норма
-          }
-          telnet = null; // Убираем ссылку
-        });
-
-        // Таймаут для всей операции Telnet
-        const telnetTimer = setTimeout(() => {
-          cleanup();
-          reject(new Error('Telnet reset timed out'));
-        }, timeout + 2000); // Даем больше времени на Telnet
-
-        // Сразу после инициирования очищаем таймер, если resolve/reject произошли раньше
-        telnet.prependOnceListener('close', () => clearTimeout(telnetTimer)); // Используем prependOnceListener для надежности
-        telnet.prependOnceListener('error', () => clearTimeout(telnetTimer));
-      });
-    }
-
-    if (this.status !== 'connected') {
-      return Promise.reject(new Error('Not connected'));
-    }
-
-    if (oRequest.id < 0x00 || oRequest.id > 0xff) {
-      return Promise.reject(new Error('ID is out of range'));
-    }
-
-    // Проверка, не занят ли уже этот oRequest.id
-    if (this._pendingRequests.has(oRequest.id)) {
-      return Promise.reject(new Error(`Packet ID collision for ${oRequest.id}. Try again later.`));
-    }
-
-    return new Promise((resolve, reject) => {
-      let { addr, cmd } = oRequest.request;
-      // Валидация адреса (согласно документации к протоколу)
-      addr = addr >= 0x02 && addr <= 0x69 ? addr : null;
-      let packetToSend = null;
-
-      // Формирование пакета
-      switch (cmd) {
-        case 'scan':
-          packetToSend = this._makeScanPacket(oRequest.id);
-          break;
-        case 'get_sn':
-          if (addr === null) return reject(new Error('Address required for get_sn'));
-          packetToSend = this._makeGetSnPacket(oRequest.id, addr);
-          break;
-        case 'get_time':
-          if (addr === null) return reject(new Error('Address required for get_time'));
-          packetToSend = this._makeGetTimePacket(oRequest.id, addr);
-          break;
-        case 'set_time':
-          if (addr === null) return reject(new Error('Address required for set_time'));
-          packetToSend = this._makeSetTimePacket(oRequest.id, addr);
-          break;
-        case 'open':
-          if (addr === null) return reject(new Error('Address required for open'));
-          packetToSend = this._makeOpenDoorPacket(oRequest.id, addr);
-          break;
-        default:
-          return reject(new Error(`Unknown command: ${cmd}`));
-      }
-
-      if (!packetToSend) {
-        // Если пакет не был создан (например, из-за ошибки в switch)
-        return reject(new Error(`Failed to create packet for command: ${cmd}`));
-      }
-
-      // Создаем таймер
-      const timer = setTimeout(() => {
+        // Проверка, не занят ли уже этот oRequest.id
         if (this._pendingRequests.has(oRequest.id)) {
-          this._pendingRequests.delete(oRequest.id);
-          reject(new Error(`Request timed out (id: ${oRequest.id}, cmd: ${cmd})`));
+          return Promise.reject(new Error(`Packet ID collision for ${oRequest.id}. Try again later.`));
         }
-      }, timeout);
 
-      // Сохраняем информацию о запросе
-      this._pendingRequests.set(oRequest.id, { resolve, reject, timer, id: oRequest.id, cmd: cmd });
+        return new Promise((resolve, reject) => {
+          let { addr, cmd } = oRequest.request;
+          // Валидация адреса (согласно документации к протоколу)
+          addr = addr >= 0x02 && addr <= 0x69 ? addr : null;
+          let packetToSend = null;
 
-      // Отправляем пакет
-      this._send(packetToSend);
+          // Формирование пакета
+          switch (cmd) {
+            case 'scan':
+              packetToSend = this._makeScanPacket(oRequest.id);
+              break;
+            case 'get_sn':
+              if (addr === null) return reject(new Error('Address required for get_sn'));
+              packetToSend = this._makeGetSnPacket(oRequest.id, addr);
+              break;
+            case 'get_time':
+              if (addr === null) return reject(new Error('Address required for get_time'));
+              packetToSend = this._makeGetTimePacket(oRequest.id, addr);
+              break;
+            case 'set_time':
+              if (addr === null) return reject(new Error('Address required for set_time'));
+              packetToSend = this._makeSetTimePacket(oRequest.id, addr);
+              break;
+            case 'open':
+              if (addr === null) return reject(new Error('Address required for open'));
+              packetToSend = this._makeOpenDoorPacket(oRequest.id, addr);
+              break;
+            default:
+              return reject(new Error(`Unknown command: ${cmd}`));
+          }
+
+          if (!packetToSend) {
+            // Если пакет не был создан (например, из-за ошибки в switch)
+            return reject(new Error(`Failed to create packet for command: ${cmd}`));
+          }
+
+          // Создаем таймер
+          const timer = setTimeout(() => {
+            if (this._pendingRequests.has(oRequest.id)) {
+              this._pendingRequests.delete(oRequest.id);
+              reject(new Error(`Request timed out (id: ${oRequest.id}, cmd: ${cmd})`));
+            }
+          }, timeout);
+
+          // Сохраняем информацию о запросе
+          this._pendingRequests.set(oRequest.id, { resolve, reject, timer, id: oRequest.id, cmd: cmd });
+
+          // Отправляем пакет
+          this._send(packetToSend);
+        });
+    }
+  }
+
+  _handleConnect(oRequest) {
+    return new Promise((resolve, reject) => {
+      if (this.status === 'disconnected') {
+        this._init();
+        const onInit = (status) => {
+          this.off('error', onError);
+          this.enabled = true;
+          resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'connect', data: status } });
+        };
+        const onError = (err) => {
+          this.off('init', onInit);
+          const errorMsg = err instanceof Error ? err.message : String(err); // !!!!!!!!!!!!!!!!!!!! Проверь генерацию события 'error' в _init
+          reject(new Error(`Connect failed: ${errorMsg}`));
+        };
+        this.once('init', onInit);
+        this.once('error', onError);
+      } else {
+        reject(new Error('Already connected'));
+      }
     });
   }
+
+  _handleDisconnect(oRequest) {
+    return new Promise((resolve, reject) => {
+      if (this.status === 'connected') {
+        const onClose = (status) => {
+          this.off('error', onError);
+          this.enabled = false;
+          this._tcpClient = null;
+          resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'disconnect', data: status } });
+        };
+        const onError = (err) => {
+          this.off('close', onClose);
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          reject(new Error(`Disconnect failed: ${errorMsg}`));
+        };
+        this.once('close', onClose);
+        this.once('error', onError);
+
+        if (this._tcpClient) {
+          this._tcpClient.destroy();
+        } else {
+          onClose('disconnected');
+        }
+      } else {
+        reject(new Error('Already disconnected'));
+      }
+    });
+  }
+
+  _handleReset(oRequest, timeout) {
+    return new Promise((resolve, reject) => {
+      if (!this._tcpClient) {
+        return reject(new Error('Cannot reset when not connected via main protocol'));
+      }
+      // Сохраняем текущий статус, т.к. сокет будет уничтожен !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      // const wasConnected = this.status === 'connected';
+      // if(wasConnected) {
+
+      if (this.status === 'connected') {
+        this._tcpClient.destroy();
+        this._tcpClient = null;
+        this.status = 'disconnected';
+      }
+
+      let telnet = new Net.Socket();
+      const inTelnet = [];
+      let resetCommandSent = false;
+
+      const cleanup = () => {
+        if (telnet) {
+          telnet.destroy();
+          telnet = null;
+        }
+      };
+
+      telnet.connect(23, this.ip, () => {});
+
+      telnet.on('data', (data) => {
+        const dataStr = data.toString();
+        inTelnet.push(dataStr);
+        // Упрощенная логика - может быть ненадёжной
+        if (inTelnet.length === 2 && inTelnet[inTelnet.length - 1] === '> ') {
+          telnet.write(`${this.key}\r\n`);
+        }
+        if (inTelnet.length === 4 && inTelnet[inTelnet.length - 1] === '> ') {
+          if (!resetCommandSent) {
+            telnet.write('rst\r\n');
+            resetCommandSent = true;
+            // Не ждем ответа, предполагаем, что команда отправлена
+            // Закрываем Telnet соединение
+            cleanup();
+            // Даем время на перезагрузку
+            setTimeout(() => {
+              resolve({
+                id: oRequest.id,
+                error: null,
+                responce: { addr: null, cmd: 'reset', data: 'reset initiated' },
+              });
+            }, 3000);
+          }
+        }
+      });
+
+      telnet.on('error', (err) => {
+        cleanup();
+        reject(new Error(`Telnet reset failed: ${err.code || err.message}`));
+      });
+
+      telnet.on('close', () => {
+        // Если соединение закрылось до отправки команды или до резолва - возможно, ошибка
+        if (!resetCommandSent) {
+          // reject(new Error('Telnet connection closed unexpectedly during reset'));
+          // Можно и не реджектить, если закрытие после rst - это норма
+        }
+        telnet = null; // Убираем ссылку
+      });
+
+      // Таймаут для всей операции Telnet
+      const telnetTimer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Telnet reset timed out'));
+      }, timeout + 2000); // Даем больше времени на Telnet
+
+      // Сразу после инициирования очищаем таймер, если resolve/reject произошли раньше
+      telnet.prependOnceListener('close', () => clearTimeout(telnetTimer)); // Используем prependOnceListener для надежности
+      telnet.prependOnceListener('error', () => clearTimeout(telnetTimer));
+    });
+  }
+
+  _handleOtherCommands(oRequest, timeout) {}
 
   // устанавливает подключение и обрабатывает события связаные с подключением
   _init() {
@@ -274,7 +324,6 @@ class ILz397web extends EventEmitter {
     });
 
     this._tcpClient.on('error', (err) => {
-      debug('SOCKET ERROR:', err.code);
       this.status = 'disconnected'; // Меняем статус при ошибке
       this._clearPendingRequests(new Error(`Socket error: ${err.code}`)); // Отклоняем все ожидающие запросы
       this.emit('error', new Error(`Socket error: ${err.code || err.message}`)); // Генерируем ошибку
@@ -296,6 +345,7 @@ class ILz397web extends EventEmitter {
 
   // Сбрасываем setTimeout, реджектим ждущие промисы и точищаем _pendingRequests
   _clearPendingRequests(error) {
+    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _clearPendingRequests');
     if (this._pendingRequests.size > 0) {
       debug(`Clearing ${this._pendingRequests.size} pending requests due to: ${error.message}`);
       for (const [id, requestInfo] of this._pendingRequests.entries()) {
@@ -308,7 +358,7 @@ class ILz397web extends EventEmitter {
 
   _handlerReceivedData(oData) {
     // oData = { type: iType, id: iId, packet: [] }
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _handlerReceivedData');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _handlerReceivedData');
 
     const iId = oData.id; // ID из пакета (0-255)
 
@@ -335,10 +385,12 @@ class ILz397web extends EventEmitter {
       // (Пример: можно создать ключ на основе типа и команды/подтипа)
       const responseKey = `${iType}-${aPacket[4]}-${aPacket[5]}`; // Пример ключа, нужно адаптировать под реальные различия
 
-      if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] === 0x00) {  // scan
+      if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] === 0x00) {
+        // scan
         result.responce.addr = null; // У Scan нет адреса контроллера в ответе
         result.responce.data = this._parseScanResp(aPacket);
-      } else if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] >= 0x02) { // get_sn
+      } else if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] >= 0x02) {
+        // get_sn
         const snData = this._parseGetSnResp(aPacket);
         if (snData.error) {
           parseError = new Error(snData.error); // Если парсер вернул ошибку
@@ -346,7 +398,8 @@ class ILz397web extends EventEmitter {
           result.responce.addr = snData.addr;
           result.responce.data = snData.data;
         }
-      } else if (iType === 0x1f && aPacket[0x04] === 0x02 && aPacket[0x07] >= 0xd0) { // get_time
+      } else if (iType === 0x1f && aPacket[0x04] === 0x02 && aPacket[0x07] >= 0xd0) {
+        // get_time
         const timeData = this._parseGetTime(aPacket);
         if (timeData.error) {
           parseError = new Error(snData.error); // Если парсер вернул ошибку
@@ -354,26 +407,32 @@ class ILz397web extends EventEmitter {
           result.responce.addr = timeData.addr;
           result.responce.data = timeData.data;
         }
-      } else if (iType === 0x1f && aPacket[0x04] === 0x03 && aPacket[0x08] >= 0x55) { // set_time
+      } else if (iType === 0x1f && aPacket[0x04] === 0x03 && aPacket[0x08] >= 0x55) {
+        // set_time
         const timeSetData = this._parseSetTime(aPacket);
         result.responce.addr = timeSetData.addr;
         result.responce.data = timeSetData.data;
-      } else if (iType === 0x1f && aPacket[0x04] === 0x07 && aPacket[0x08] >= 0x55) { // open
+      } else if (iType === 0x1f && aPacket[0x04] === 0x07 && aPacket[0x08] >= 0x55) {
+        // open
         const openData = this._parseOpen(aPacket);
         result.responce.addr = openData.addr;
         result.responce.data = openData.data;
-      } else {  // Неизвестный тип пакета
+      } else {
+        // Неизвестный тип пакета
         if (DEBUG) debug('Unknown packet structure in _handlerReceivedData', aPacket);
         parseError = new Error(`Unknown response structure received (type: ${iType}, cmdByte: ${aPacket[4]})`);
       }
-    } catch (e) { // Ошибка во время парсинга
+    } catch (e) {
+      // Ошибка во время парсинга
       debug('Error during parsing response:', e);
       parseError = new Error(`Failed to parse response: ${e.message}`);
     }
 
-    if (parseError) { // Если была ошибка парсинга, отклоняем промис
+    if (parseError) {
+      // Если была ошибка парсинга, отклоняем промис
       pendingRequest.reject(parseError);
-    } else { // Если все хорошо, разрешаем промис
+    } else {
+      // Если все хорошо, разрешаем промис
       pendingRequest.resolve(result);
     }
   }
@@ -393,7 +452,7 @@ class ILz397web extends EventEmitter {
       }
     }
 
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseScanResp', addresses);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseScanResp', addresses);
 
     return addresses; // Просто массив с адресами
   }
@@ -407,7 +466,7 @@ class ILz397web extends EventEmitter {
     } else {
       const sn = (data[7] << 8) | data[6];
 
-      if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetSnResp', addr, sn);
+      // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetSnResp', addr, sn);
 
       return { addr: addr, data: sn, error: null };
     }
@@ -429,7 +488,7 @@ class ILz397web extends EventEmitter {
         return { addr: addr, data: time, error: 'Invalid date components' };
       }
 
-      if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetTime', addr, time);
+      // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetTime', addr, time);
 
       return { addr: addr, data: time, error: null };
     } catch (e) {
@@ -440,7 +499,7 @@ class ILz397web extends EventEmitter {
 
   // парсит пакет с ответом на команду установки текущего времени
   _parseSetTime(data) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseSetTime');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseSetTime');
 
     const addr = data[5];
     return { addr: addr, data: 'ok', error: null };
@@ -448,7 +507,7 @@ class ILz397web extends EventEmitter {
 
   // парсит пакет с ответом на команду открытия замка
   _parseOpen(data) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseOpen');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseOpen');
 
     const addr = data[5];
     return { addr: addr, data: 'ok', error: null };
@@ -456,7 +515,7 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет сканирования шины
   _makeScanPacket(id) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeScanPacket');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeScanPacket');
 
     const cmdType = 0x20;
     // [...[checksum, length], ...[ license, id, cmd, 0, 0, 0 ] ]
@@ -466,7 +525,7 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет запроса серийного номера
   _makeGetSnPacket(id, addr) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetSnPacket', addr);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetSnPacket', addr);
 
     let cmdType = 0x20;
     // [...[checksum, length], ...[ license, id, cmd, addr, 0, 0 ] ]
@@ -476,7 +535,7 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет открытия двери
   _makeOpenDoorPacket(id, addr) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeOpenDoorPacket', addr);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeOpenDoorPacket', addr);
 
     const cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, 0, 0 ] ]
@@ -486,7 +545,7 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет установки текущего времени контроллера
   _makeSetTimePacket(id, addr) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeSetTimePacket', addr);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeSetTimePacket', addr);
 
     let cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, bank_number, bank_type, bytes_to_write, MSB, LSB, sec, min, hour, wday, day, mon, year]
@@ -508,7 +567,7 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет запроса текущего времени контроллера
   _makeGetTimePacket(id, addr) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetTimePacket', addr);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetTimePacket', addr);
 
     let cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, bank_number, bank_type, bytes_to_read, MSB, LSB]
@@ -520,7 +579,7 @@ class ILz397web extends EventEmitter {
   // Остальные приватные методы (_send, _receivingData, _checkSum, _assembing, _unpacking, _packing)
   // В _receivingData нужно вернуть и ошибку, если она обнаружена (тип 0x02)
   _receivingData(aData) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _receivingData'/*, aData*/);
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _receivingData' /*, aData*/);
 
     let rxIndex = this._buffer.length; // Продолжаем добавлять в буфер
     let packet = null; // Используем null как индикатор отсутствия полного пакета
@@ -553,7 +612,7 @@ class ILz397web extends EventEmitter {
       packet = [...this._buffer.slice(0, endIndex + 1)]; // Включая this._endByte
       cmdType = packet[0]; // Тип команды - первый байт пакета
 
-      // Удаляем пакет из буфера 
+      // Удаляем пакет из буфера
       this._buffer = this._buffer.slice(endIndex + 1);
       this._rxState = false; // Готовы к приему следующего пакета
 
@@ -562,7 +621,11 @@ class ILz397web extends EventEmitter {
         let error = 'Unknown protocol error (0x02)';
         const endOfPacket = array.indexOf(this._endByte);
         const errorCode = '';
-        if (endOfPacket !== -1) errorCode = ((packet.slice(1, endOfPacket)).map(num => `0x${num.toString(16)}`)).join(', ');
+        if (endOfPacket !== -1)
+          errorCode = packet
+            .slice(1, endOfPacket)
+            .map((num) => `0x${num.toString(16)}`)
+            .join(', ');
         switch (errorCode) {
           case '0x48, 0x48':
             error = 'ERROR CRC';
@@ -614,7 +677,7 @@ class ILz397web extends EventEmitter {
   // распаковывает полученый от конвертера пакет, должен вернуть { type, id, packet }
   _unpacking(oData) {
     // oData = { type: cmdType, id: null, packet: packet }
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _unpacking');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _unpacking');
 
     let iType = oData.type;
     let aPacket = oData.packet; // Пакет без стартового и конечного байтов
@@ -644,7 +707,7 @@ class ILz397web extends EventEmitter {
   // Проверяет контрольную сумму РАСПАКОВАННОГО пакета
   _checkSum(unpackedData) {
     // unpackedData = результат _unpacking
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _checkSum');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _checkSum');
 
     let packet = [...unpackedData].slice(0, unpackedData[1]);
     let sum = 0;
@@ -665,7 +728,7 @@ class ILz397web extends EventEmitter {
   // Метод _assembing: добавляет длину, ID, считает КС, пакует и обрамляет
   _assembing(iType, dataPayload) {
     // dataPayload - данные БЕЗ длины, ID и КС
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _assembing');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _assembing');
 
     // 1. Формируем пакет с KC, длиной и данными
     let packet = [0x00, 0x00, ...dataPayload]; // Место для KC, длины и данные
@@ -690,7 +753,7 @@ class ILz397web extends EventEmitter {
 
   _packing(notPackedData) {
     // notPackedData - пакет с длиной, id, данными, КС и паддингом
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _packing');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _packing');
 
     const temp_in = [0, 0, 0, 0];
     let outPacket = [];
@@ -712,7 +775,7 @@ class ILz397web extends EventEmitter {
   }
 
   _send(data) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _send');
+    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _send');
 
     if (this.status === 'connected' && this._tcpClient) {
       this._tcpClient.write(Buffer.from(data)); // Отправляем как Buffer
@@ -729,7 +792,6 @@ function debug(...args) {
   console.log(performance.now().toFixed(0), '\t\t', ...args);
 }
 
-
 if (DEBUG === 'demo') {
   const iL = new ILz397web('192.168.14.9', 1000, '2B07D1B1');
   // const iL = new ILz397web('192.168.1.115', 1000, '8C0552F2');
@@ -745,7 +807,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -755,7 +817,7 @@ if (DEBUG === 'demo') {
         addreses = [...resp.responce.data];
         debug('SCN', resp, addreses);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -770,7 +832,7 @@ if (DEBUG === 'demo') {
           debug('controllers', key, controllers[key]);
         }
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -779,7 +841,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: 8, cmd: 'get_sn' } });
         debug('GSN', resp, resp.responce.data);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -788,7 +850,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp, resp.responce.data);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -797,7 +859,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'set_time' } });
         debug('STM', resp, resp.responce.data);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -806,7 +868,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp, resp.responce.data);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -814,7 +876,7 @@ if (DEBUG === 'demo') {
       resp = await iL.get({ id: id++, request: { addr: null, cmd: 'reset' } });
       debug('RES', resp);
     } catch (err) {
-      debug('ERROR', err);
+      // debug('ERROR', err);
     }
     debug('STA', iL.status);
     if (iL.status === 'disconnected') {
@@ -822,7 +884,7 @@ if (DEBUG === 'demo') {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
     debug('STA', iL.status);
@@ -832,11 +894,11 @@ if (DEBUG === 'demo') {
         debug('DIS', resp);
         addreses = [...resp.responce.data];
       } catch (err) {
-        debug('ERROR', err);
+        // debug('ERROR', err);
       }
     }
   }
-  
+
   iL.on('error', (err) => {
     debug('>>> Global Error Event:', err); // Ловим ошибки сокета или протокола
   });
@@ -846,11 +908,6 @@ if (DEBUG === 'demo') {
 
   iL1run();
 }
-
-
-
-
-
 
 /*
 
