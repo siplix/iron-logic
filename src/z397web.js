@@ -196,9 +196,6 @@ class ILz397web extends EventEmitter {
       if (!this._tcpClient) {
         return reject(new Error('Cannot reset when not connected via main protocol'));
       }
-      // Сохраняем текущий статус, т.к. сокет будет уничтожен !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      // const wasConnected = this.status === 'connected';
-      // if(wasConnected) {
 
       if (this.status === 'connected') {
         this._tcpClient.destroy();
@@ -402,7 +399,7 @@ class ILz397web extends EventEmitter {
         // get_time
         const timeData = this._parseGetTime(aPacket);
         if (timeData.error) {
-          parseError = new Error(snData.error); // Если парсер вернул ошибку
+          parseError = new Error(timeData.error); // Если парсер вернул ошибку
         } else {
           result.responce.addr = timeData.addr;
           result.responce.data = timeData.data;
@@ -577,6 +574,7 @@ class ILz397web extends EventEmitter {
   }
 
   // Остальные приватные методы (_send, _receivingData, _checkSum, _assembing, _unpacking, _packing)
+
   // В _receivingData нужно вернуть и ошибку, если она обнаружена (тип 0x02)
   _receivingData(aData) {
     // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _receivingData' /*, aData*/);
@@ -584,7 +582,6 @@ class ILz397web extends EventEmitter {
     let rxIndex = this._buffer.length; // Продолжаем добавлять в буфер
     let packet = null; // Используем null как индикатор отсутствия полного пакета
     let cmdType = null;
-    let errorResult = null; // Для ошибок протокола
 
     // Ищем стартовый байт только если не в середине приема
     if (!this._rxState) {
@@ -619,12 +616,12 @@ class ILz397web extends EventEmitter {
       // Проверяем на ошибки протокола (тип 0x02)
       if (cmdType === 0x02) {
         let error = 'Unknown protocol error (0x02)';
-        const endOfPacket = array.indexOf(this._endByte);
+        const endOfPacket = packet.indexOf(this._endByte);
         const errorCode = '';
         if (endOfPacket !== -1)
           errorCode = packet
             .slice(1, endOfPacket)
-            .map((num) => `0x${num.toString(16)}`)
+            .map((num) => `0x${num.toString(16).padStart(2, '0')}`)
             .join(', ');
         switch (errorCode) {
           case '0x48, 0x48':
@@ -658,7 +655,7 @@ class ILz397web extends EventEmitter {
             error = 'ERROR packet first byte';
             break;
           default:
-            error = `ERROR unknown code 0x${errorCode1.toString(16)}`;
+            error = `ERROR unknown code 0x${errorCode.toString(16)}`;
             break;
         }
         // Возвращаем ошибку вместо пакета
@@ -736,7 +733,7 @@ class ILz397web extends EventEmitter {
 
     // 2. Считаем КС
     let sum = 0;
-    for (var i = 0; i < packet.length; i++) sum += packet[i];
+    for (let i = 0; i < packet.length; i++) sum += packet[i];
     packet[0] = 0xff - (sum & 0xff);
 
     // 3. Паддинг до кратной 4 байтам длины
@@ -909,101 +906,4 @@ if (DEBUG === 'demo') {
   iL1run();
 }
 
-/*
-
-// --- Демо блок ---
-if (DEBUG === 'demo') {
-  const iL = new ILz397web('192.168.14.9', 1000, '2B07D1B1');
-  // const iL = new ILz397web('192.168.1.115', 1000, '8C0552F2');
-
-  let requestIdCounter = 1; // Используем счетчик для уникальных ID запросов
-
-  async function runDemo() {
-    debug('DEMO START');
-    try {
-      // Подключение
-      debug('Connecting...');
-      let resp = await iL.get({ id: requestIdCounter++, request: { cmd: 'connect' } });
-      debug('CONNECT Resp:', resp);
-
-      // --- Тест одновременных запросов ---
-      debug('Sending concurrent requests...');
-      const promises = [];
-      promises.push(
-        iL
-          .get({ id: requestIdCounter++, request: { cmd: 'scan' } })
-          .then((r) => debug('SCAN Resp:', r))
-          .catch((e) => debug('SCAN Error:', e))
-      );
-      promises.push(
-        iL
-          .get({ id: requestIdCounter++, request: { addr: 2, cmd: 'get_sn' } })
-          .then((r) => debug('GET_SN (2) Resp:', r))
-          .catch((e) => debug('GET_SN (2) Error:', e))
-      );
-      promises.push(
-        iL
-          .get({ id: requestIdCounter++, request: { addr: 8, cmd: 'get_sn' } })
-          .then((r) => debug('GET_SN (8) Resp:', r))
-          .catch((e) => debug('GET_SN (8) Error:', e))
-      );
-      promises.push(
-        iL
-          .get({ id: requestIdCounter++, request: { addr: 2, cmd: 'get_time' } })
-          .then((r) => debug('GET_TIME (2) Resp:', r))
-          .catch((e) => debug('GET_TIME (2) Error:', e))
-      );
-
-      await Promise.allSettled(promises); // Ждем завершения всех
-      debug('Concurrent requests finished.');
-      // ------------------------------------
-
-      // Последовательные запросы
-      debug('Sending sequential requests...');
-      resp = await iL.get({ id: requestIdCounter++, request: { addr: 2, cmd: 'set_time' } });
-      debug('SET_TIME (2) Resp:', resp);
-
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Небольшая пауза
-
-      resp = await iL.get({ id: requestIdCounter++, request: { addr: 2, cmd: 'get_time' } });
-      debug('GET_TIME (2) after set Resp:', resp);
-
-      //await new Promise((resolve) => setTimeout(resolve, 100));
-
-      //resp = await iL.get({ id: requestIdCounter++, request: { addr: 2, cmd: 'open' } });
-      //debug('OPEN (2) Resp:', resp);
-
-      // Тест таймаута (пример - запрос к несуществующему адресу, который может не ответить)
-      // debug('Testing timeout...');
-      // try {
-      //      await iL.get({ id: requestIdCounter++, request: { addr: 99, cmd: 'get_sn' } }, 2000); // Таймаут 2 сек
-      // } catch (e) {
-      //      debug('TIMEOUT/Error Test Result:', e.message); // Ожидаем ошибку таймаута или "Controller not found"
-      // }
-
-      // Отключение
-      debug('Disconnecting...');
-      resp = await iL.get({ id: requestIdCounter++, request: { cmd: 'disconnect' } });
-      debug('DISCONNECT Resp:', resp);
-    } catch (error) {
-      debug('DEMO sequence error:', error);
-    } finally {
-      debug('DEMO END');
-      // Убедимся, что соединение закрыто, если что-то пошло не так
-      if (iL.status !== 'disconnected' && iL._tcpClient) {
-        iL._tcpClient.destroy();
-      }
-    }
-  }
-
-  iL.on('error', (err) => {
-    debug('>>> Global Error Event:', err); // Ловим ошибки сокета или протокола
-  });
-  iL.on('close', (status) => {
-    debug('>>> Global Close Event:', status);
-  });
-
-  runDemo();
-}
-*/
 module.exports = ILz397web;
