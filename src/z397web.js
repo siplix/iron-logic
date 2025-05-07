@@ -798,26 +798,26 @@ if (DEBUG === 'demo') {
     let resp;
     let addreses = [];
     const controllers = {};
-    debug('STA', iL.status);
+    debug('STA_01', iL.status);
     if (iL.status === 'disconnected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_02', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'scan' } });
         addreses = [...resp.responce.data];
         debug('SCN', resp, addreses);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_03', iL.status);
     if (iL.status === 'connected') {
       try {
         for (addr of addreses) {
@@ -829,69 +829,69 @@ if (DEBUG === 'demo') {
           debug('controllers', key, controllers[key]);
         }
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_04', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: 8, cmd: 'get_sn' } });
         debug('GSN', resp, resp.responce.data);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_05', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp, resp.responce.data);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_06', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'set_time' } });
         debug('STM', resp, resp.responce.data);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_07', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp, resp.responce.data);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_08', iL.status);
     try {
       resp = await iL.get({ id: id++, request: { addr: null, cmd: 'reset' } });
       debug('RES', resp);
     } catch (err) {
-      // debug('ERROR', err);
+       debug('ERROR', err);
     }
-    debug('STA', iL.status);
+    debug('STA_09', iL.status);
     if (iL.status === 'disconnected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
-    debug('STA', iL.status);
+    debug('STA_10', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'disconnect' } });
         debug('DIS', resp);
         addreses = [...resp.responce.data];
       } catch (err) {
-        // debug('ERROR', err);
+         debug('ERROR', err);
       }
     }
   }
