@@ -27,7 +27,7 @@ const DEFAULT_TIMEOUT = 2000; // Таймаут ожидания ответа в
    *    {
    *      id:           // id запроса от 0 до 255,
    *      error:        // ошибка или null,
-   *      responce: {
+   *      response: {
    *        addr:       // адрес контроллера или null,
    *        cmd:        // команда указаная в запросе,
    *        data:       // непосредственно ответ или null при ошибке
@@ -145,7 +145,7 @@ class ILz397web extends EventEmitter {
         const onInit = (status) => {
           this.off('error', onError);
           this.enabled = true;
-          resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'connect', data: status } });
+          resolve({ id: oRequest.id, error: null, response: { addr: null, cmd: 'connect', data: status } });
         };
         const onError = (err) => {
           this.off('init', onInit);
@@ -167,7 +167,7 @@ class ILz397web extends EventEmitter {
           this.off('error', onError);
           this.enabled = false;
           this._tcpClient = null;
-          resolve({ id: oRequest.id, error: null, responce: { addr: null, cmd: 'disconnect', data: status } });
+          resolve({ id: oRequest.id, error: null, response: { addr: null, cmd: 'disconnect', data: status } });
         };
         const onError = (err) => {
           this.off('close', onClose);
@@ -232,7 +232,7 @@ class ILz397web extends EventEmitter {
               resolve({
                 id: oRequest.id,
                 error: null,
-                responce: { addr: null, cmd: 'reset', data: 'reset initiated' },
+                response: { addr: null, cmd: 'reset', data: 'reset initiated' },
               });
             }, 3000);
           }
@@ -356,7 +356,7 @@ class ILz397web extends EventEmitter {
 
     const iType = oData.type;
     const aPacket = oData.packet;
-    let result = { id: pendingRequest.id, error: null, responce: { addr: null, cmd: pendingRequest.cmd, data: null } };
+    let result = { id: pendingRequest.id, error: null, response: { addr: null, cmd: pendingRequest.cmd, data: null } };
     let parseError = null;
 
     try {
@@ -366,16 +366,16 @@ class ILz397web extends EventEmitter {
 
       if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] === 0x00) {
         // scan
-        result.responce.addr = null; // У Scan нет адреса контроллера в ответе
-        result.responce.data = this._parseScanResp(aPacket);
+        result.response.addr = null; // У Scan нет адреса контроллера в ответе
+        result.response.data = this._parseScanResp(aPacket);
       } else if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] >= 0x02) {
         // get_sn
         const snData = this._parseGetSnResp(aPacket);
         if (snData.error) {
           parseError = new Error(snData.error); // Если парсер вернул ошибку
         } else {
-          result.responce.addr = snData.addr;
-          result.responce.data = snData.data;
+          result.response.addr = snData.addr;
+          result.response.data = snData.data;
         }
       } else if (iType === 0x1f && aPacket[0x04] === 0x02 && aPacket[0x07] >= 0xd0) {
         // get_time
@@ -383,19 +383,19 @@ class ILz397web extends EventEmitter {
         if (timeData.error) {
           parseError = new Error(timeData.error); // Если парсер вернул ошибку
         } else {
-          result.responce.addr = timeData.addr;
-          result.responce.data = timeData.data;
+          result.response.addr = timeData.addr;
+          result.response.data = timeData.data;
         }
       } else if (iType === 0x1f && aPacket[0x04] === 0x03 && aPacket[0x08] >= 0x55) {
         // set_time
         const timeSetData = this._parseSetTime(aPacket);
-        result.responce.addr = timeSetData.addr;
-        result.responce.data = timeSetData.data;
+        result.response.addr = timeSetData.addr;
+        result.response.data = timeSetData.data;
       } else if (iType === 0x1f && aPacket[0x04] === 0x07 && aPacket[0x08] >= 0x55) {
         // open
         const openData = this._parseOpen(aPacket);
-        result.responce.addr = openData.addr;
-        result.responce.data = openData.data;
+        result.response.addr = openData.addr;
+        result.response.data = openData.data;
       } else {
         // Неизвестный тип пакета
         parseError = new Error(`Unknown response structure received (type: ${iType}, cmdByte: ${aPacket[4]})`);
