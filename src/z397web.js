@@ -1,7 +1,6 @@
 const EventEmitter = require('events');
 const Net = require('net');
 
-const DEBUG = 'demo';
 const DEFAULT_TIMEOUT = 2000; // Таймаут ожидания ответа в мс
 
 // Класс, обмен данными с конвертером ironLogic Z397-web
@@ -65,8 +64,6 @@ class ILz397web extends EventEmitter {
   }
 
   async get(oRequest, timeout = DEFAULT_TIMEOUT) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - get', oRequest);
-
     switch (oRequest.request.cmd) {
       case 'connect':
         return this._handleConnect(oRequest);
@@ -272,8 +269,6 @@ class ILz397web extends EventEmitter {
 
   // устанавливает подключение и обрабатывает события связаные с подключением
   _init() {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _init');
-
     if (this._tcpClient) {
       try {
         this._tcpClient.destroy();
@@ -296,26 +291,19 @@ class ILz397web extends EventEmitter {
     });
 
     this._tcpClient.on('data', (data) => {
-      if (DEBUG === 'messages') debug('RAW DATA IN:', data);
       // Получаем объект { type, id, packet } или null при ошибке разбора/протокола
       let oPacketData = this._receivingData(data); // Получаем {type, id: null, packet}
 
       if (oPacketData && oPacketData.packet && oPacketData.packet.length > 0) {
         // Распаковываем и проверяем контрольную сумму
         let unpacked = this._unpacking(oPacketData); // Получаем {type, id, packet} с ID!
-        if (DEBUG === 'messages') debug('UNPACKED:', unpacked);
         if (unpacked && unpacked.packet && this._checkSum(unpacked.packet)) {
           this._handlerReceivedData(unpacked); // Передаем {type, id, packet} дальше
         } else if (unpacked && unpacked.packet) {
-          debug('CHECKSUM ERROR', unpacked.packet);
-          this.emit(
-            'error',
-            new Error(`Checksum error for incoming packet (type: ${unpacked.type}, id: ${unpacked.id})`)
-          );
+          this.emit('error', new Error(`Checksum error (type: ${unpacked.type}, id: ${unpacked.id})`));
         }
       } else if (oPacketData && oPacketData.error) {
         // Если _receivingData вернуло ошибку протокола (тип 0x02)
-        debug('PROTOCOL ERROR:', oPacketData.error);
         this.emit('error', new Error(`Protocol error: ${oPacketData.error}`));
       }
     });
@@ -327,7 +315,6 @@ class ILz397web extends EventEmitter {
     });
 
     this._tcpClient.on('close', (hadError) => {
-      debug('SOCKET CLOSE:', hadError ? 'due to error' : 'normally');
       const oldStatus = this.status;
       this.status = 'disconnected';
       // Очищаем ожидающие запросы только если закрытие не было инициировано Disconnect
@@ -342,9 +329,7 @@ class ILz397web extends EventEmitter {
 
   // Сбрасываем setTimeout, реджектим ждущие промисы и точищаем _pendingRequests
   _clearPendingRequests(error) {
-    if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _clearPendingRequests');
     if (this._pendingRequests.size > 0) {
-      debug(`Clearing ${this._pendingRequests.size} pending requests due to: ${error.message}`);
       for (const [id, requestInfo] of this._pendingRequests.entries()) {
         clearTimeout(requestInfo.timer);
         requestInfo.reject(error); // Отклоняем промис
@@ -355,8 +340,6 @@ class ILz397web extends EventEmitter {
 
   _handlerReceivedData(oData) {
     // oData = { type: iType, id: iId, packet: [] }
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _handlerReceivedData');
-
     const iId = oData.id; // ID из пакета (0-255)
 
     // Находим соответствующий запрос в _pendingRequests
@@ -364,7 +347,6 @@ class ILz397web extends EventEmitter {
 
     if (!pendingRequest) {
       // Ответ на неизвестный ID или запоздавший ответ
-      debug(`Received data for unknown or timed out request (id: ${iId})`, oData.packet);
       return;
     }
 
@@ -416,12 +398,10 @@ class ILz397web extends EventEmitter {
         result.responce.data = openData.data;
       } else {
         // Неизвестный тип пакета
-        if (DEBUG) debug('Unknown packet structure in _handlerReceivedData', aPacket);
         parseError = new Error(`Unknown response structure received (type: ${iType}, cmdByte: ${aPacket[4]})`);
       }
     } catch (e) {
       // Ошибка во время парсинга
-      debug('Error during parsing response:', e);
       parseError = new Error(`Failed to parse response: ${e.message}`);
     }
 
@@ -448,9 +428,6 @@ class ILz397web extends EventEmitter {
         }
       }
     }
-
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseScanResp', addresses);
-
     return addresses; // Просто массив с адресами
   }
 
@@ -462,9 +439,6 @@ class ILz397web extends EventEmitter {
       return { addr: addr, data: null, error: 'Controller not found or invalid response' };
     } else {
       const sn = (data[7] << 8) | data[6];
-
-      // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetSnResp', addr, sn);
-
       return { addr: addr, data: sn, error: null };
     }
   }
@@ -484,36 +458,26 @@ class ILz397web extends EventEmitter {
       if (isNaN(time)) {
         return { addr: addr, data: time, error: 'Invalid date components' };
       }
-
-      // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseGetTime', addr, time);
-
       return { addr: addr, data: time, error: null };
     } catch (e) {
-      debug('Error parsing time data:', data);
       return { addr: addr, data: null, error: `Time parsing error: ${e.message}` };
     }
   }
 
   // парсит пакет с ответом на команду установки текущего времени
   _parseSetTime(data) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseSetTime');
-
     const addr = data[5];
     return { addr: addr, data: 'ok', error: null };
   }
 
   // парсит пакет с ответом на команду открытия замка
   _parseOpen(data) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _parseOpen');
-
     const addr = data[5];
     return { addr: addr, data: 'ok', error: null };
   }
 
   // Формирует пакет сканирования шины
   _makeScanPacket(id) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeScanPacket');
-
     const cmdType = 0x20;
     // [...[checksum, length], ...[ license, id, cmd, 0, 0, 0 ] ]
     const packet = [0x08, id, 0x00, 0x00, 0x00, 0x00];
@@ -522,8 +486,6 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет запроса серийного номера
   _makeGetSnPacket(id, addr) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetSnPacket', addr);
-
     let cmdType = 0x20;
     // [...[checksum, length], ...[ license, id, cmd, addr, 0, 0 ] ]
     const packet = [0x08, id, 0x00, addr, 0x00, 0x00];
@@ -532,8 +494,6 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет открытия двери
   _makeOpenDoorPacket(id, addr) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeOpenDoorPacket', addr);
-
     const cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, 0, 0 ] ]
     const packet = [0x08, id, 0x07, addr, 0x00, 0x00];
@@ -542,8 +502,6 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет установки текущего времени контроллера
   _makeSetTimePacket(id, addr) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeSetTimePacket', addr);
-
     let cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, bank_number, bank_type, bytes_to_write, MSB, LSB, sec, min, hour, wday, day, mon, year]
     const packet = [0x08, id, 0x03, addr, 0x00, 0xd0, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -564,8 +522,6 @@ class ILz397web extends EventEmitter {
 
   // Формирует пакет запроса текущего времени контроллера
   _makeGetTimePacket(id, addr) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _makeGetTimePacket', addr);
-
     let cmdType = 0x1f;
     // [...[checksum, length], ...[license, id, cmd, addr, bank_number, bank_type, bytes_to_read, MSB, LSB]
     const packet = [0x08, id, 0x02, addr, 0x00, 0xd0, 0x07, 0x00, 0x00, 0x00];
@@ -577,8 +533,6 @@ class ILz397web extends EventEmitter {
 
   // В _receivingData нужно вернуть и ошибку, если она обнаружена (тип 0x02)
   _receivingData(aData) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _receivingData' /*, aData*/);
-
     let rxIndex = this._buffer.length; // Продолжаем добавлять в буфер
     let packet = null; // Используем null как индикатор отсутствия полного пакета
     let cmdType = null;
@@ -593,7 +547,6 @@ class ILz397web extends EventEmitter {
         rxIndex = this._buffer.length;
       } else {
         // Пришли данные без стартового байта и мы его не ждем - игнорируем?
-        debug('Received data without start byte:', aData);
         return null; // Ничего не делаем
       }
     } else {
@@ -674,14 +627,11 @@ class ILz397web extends EventEmitter {
   // распаковывает полученый от конвертера пакет, должен вернуть { type, id, packet }
   _unpacking(oData) {
     // oData = { type: cmdType, id: null, packet: packet }
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _unpacking');
-
     let iType = oData.type;
     let aPacket = oData.packet; // Пакет без стартового и конечного байтов
     let iId = oData.id; // но ID пока неизвестен
 
     if (!aPacket || aPacket.length === 0) {
-      debug('Warning: _unpacking received empty packet');
       return { type: iType, id: null, packet: null };
     }
 
@@ -704,8 +654,6 @@ class ILz397web extends EventEmitter {
   // Проверяет контрольную сумму РАСПАКОВАННОГО пакета
   _checkSum(unpackedData) {
     // unpackedData = результат _unpacking
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _checkSum');
-
     let packet = [...unpackedData].slice(0, unpackedData[1]);
     let sum = 0;
     let length = packet.length;
@@ -725,8 +673,6 @@ class ILz397web extends EventEmitter {
   // Метод _assembing: добавляет длину, ID, считает КС, пакует и обрамляет
   _assembing(iType, dataPayload) {
     // dataPayload - данные БЕЗ длины, ID и КС
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _assembing');
-
     // 1. Формируем пакет с KC, длиной и данными
     let packet = [0x00, 0x00, ...dataPayload]; // Место для KC, длины и данные
     packet[1] = packet.length;
@@ -750,8 +696,6 @@ class ILz397web extends EventEmitter {
 
   _packing(notPackedData) {
     // notPackedData - пакет с длиной, id, данными, КС и паддингом
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _packing');
-
     const temp_in = [0, 0, 0, 0];
     let outPacket = [];
     for (let i = 0; i < notPackedData.length; i++) {
@@ -772,138 +716,12 @@ class ILz397web extends EventEmitter {
   }
 
   _send(data) {
-    // if (DEBUG === 'messages' || DEBUG === 'demo') debug('FN - _send');
-
     if (this.status === 'connected' && this._tcpClient) {
       this._tcpClient.write(Buffer.from(data)); // Отправляем как Buffer
     } else {
-      // Не генерируем ошибку здесь, т.к. проверка статуса есть в get()
-      debug('Attempted to send while not connected');
-      // Важно: Если отправка не удалась, нужно отменить соответствующий промис
-      // Но как найти промис без ID? Это проблема. Проверка в get() должна быть основной.
+      return;
     }
   }
 } // Конец класса
-
-function debug(...args) {
-  console.log(performance.now().toFixed(0), '\t\t', ...args);
-}
-
-if (DEBUG === 'demo') {
-  const iL = new ILz397web('192.168.14.9', 1000, '2B07D1B1');
-  // const iL = new ILz397web('192.168.1.115', 1000, '8C0552F2');
-
-  let id = 0;
-  async function iL1run() {
-    let resp;
-    let addreses = [];
-    const controllers = {};
-    debug('STA_01', iL.status);
-    if (iL.status === 'disconnected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
-        debug('CON', resp);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_02', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: null, cmd: 'scan' } });
-        addreses = [...resp.responce.data];
-        debug('SCN', resp, addreses);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_03', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        for (addr of addreses) {
-          resp = await iL.get({ id: id++, request: { addr: addr, cmd: 'get_sn' } });
-          controllers[addr] = { sn: resp.responce.data };
-          debug('GSN', resp, controllers[addr]);
-        }
-        for (let key in controllers) {
-          debug('controllers', key, controllers[key]);
-        }
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_04', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: 8, cmd: 'get_sn' } });
-        debug('GSN', resp, resp.responce.data);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_05', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
-        debug('GTM', resp, resp.responce.data);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_06', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'set_time' } });
-        debug('STM', resp, resp.responce.data);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_07', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
-        debug('GTM', resp, resp.responce.data);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_08', iL.status);
-    try {
-      resp = await iL.get({ id: id++, request: { addr: null, cmd: 'reset' } });
-      debug('RES', resp);
-    } catch (err) {
-       debug('ERROR', err);
-    }
-    debug('STA_09', iL.status);
-    if (iL.status === 'disconnected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
-        debug('CON', resp);
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-    debug('STA_10', iL.status);
-    if (iL.status === 'connected') {
-      try {
-        resp = await iL.get({ id: id++, request: { addr: null, cmd: 'disconnect' } });
-        debug('DIS', resp);
-        addreses = [...resp.responce.data];
-      } catch (err) {
-         debug('ERROR', err);
-      }
-    }
-  }
-
-  iL.on('error', (err) => {
-    debug('>>> Global Error Event:', err); // Ловим ошибки сокета или протокола
-  });
-  iL.on('close', (status) => {
-    debug('>>> Global Close Event:', status);
-  });
-
-  iL1run();
-}
 
 module.exports = ILz397web;
