@@ -76,30 +76,4 @@ async function fetchWithTimeout(url, options = {}, timeout = 5000) {
   }
 }
 
-const iL = new ILz5rweb('192.168.14.1', '0ACA3EEE', 3000);
-
-
-let id = 0;
-async function iL1run() {
-  let resp;
-  try {
-    resp = await iL.get({ id: id++, request: { cmd: 'open' } }, 1000);
-    console.log('OPEN', resp);
-  } catch (err) {
-    console.log('ERROR', err.message);
-  }
-  try {
-    resp = await iL.get({ id: id++, request: { cmd: 'get_sn' } });
-    console.log('GET SN', resp);
-  } catch (err) {
-    console.log('ERROR', err.message);
-  }
-  try {
-    resp = await iL.get({ id: id++, request: { cmd: 'get_state' } });
-    console.log('GET SN', resp);
-  } catch (err) {
-    console.log('ERROR', err.message);
-  }
-}
-
-iL1run();
+module.exports = ILz5rweb;
