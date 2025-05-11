@@ -190,9 +190,9 @@ class ILz397web extends EventEmitter {
 
   _handleReset(oRequest, timeout) {
     return new Promise((resolve, reject) => {
-      if (!this._tcpClient) {
-        return reject(new Error('Cannot reset when not connected via main protocol'));
-      }
+      // if (!this._tcpClient) {
+      //   return reject(new Error('Cannot reset when not connected via main protocol'));
+      // }
 
       if (this.status === 'connected') {
         this._tcpClient.destroy();
@@ -232,7 +232,7 @@ class ILz397web extends EventEmitter {
               resolve({
                 id: oRequest.id,
                 error: null,
-                response: { addr: null, cmd: 'reset', data: 'reset initiated' },
+                response: { addr: null, cmd: 'reset', data: 'initiated' },
               });
             }, 3000);
           }
@@ -454,7 +454,7 @@ class ILz397web extends EventEmitter {
         parseInt(data[0x0a].toString(16), 10), // Часы (был 0x0a)
         parseInt(data[0x09].toString(16), 10), // Минуты (был 0x09)
         parseInt(data[0x08].toString(16), 10) // Секунды (был 0x08)
-      );
+      ) / 1000;
       if (isNaN(time)) {
         return { addr: addr, data: time, error: 'Invalid date components' };
       }

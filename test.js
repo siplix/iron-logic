@@ -1,6 +1,6 @@
 const { ILz397web, ILz5rweb } = require('./index.js');
 
-const DEBUG = 'z5rweb';
+const DEBUG = 'z397web';
 
 const IP = '192.168.14.9';
 const PORT = 1000;
@@ -8,7 +8,6 @@ const KEY = '2B07D1B1';
 
 if (DEBUG === 'z397web') {
   const iL = new ILz397web(IP, PORT, KEY);
-  // const iL = new ILz397web('192.168.1.115', 1000, '8C0552F2');
 
   let id = 0;
   async function iL1run() {
@@ -122,10 +121,6 @@ if (DEBUG === 'z397web') {
   iL1run();
 }
 
-function debug(...args) {
-  console.log(performance.now().toFixed(0), '\t\t', ...args);
-}
-
 if (DEBUG === 'z5rweb') {
   const iL = new ILz5rweb('192.168.14.1', '0ACA3EEE', 3000);
 
@@ -153,4 +148,8 @@ if (DEBUG === 'z5rweb') {
   }
 
   iL1run();
+}
+
+function debug(...args) {
+  console.log(performance.now().toFixed(0), '\t\t', ...args);
 }
