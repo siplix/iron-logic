@@ -22,7 +22,7 @@ class ILz5rweb {
       case 'open':
         httpResp = await fetchWithTimeout(`http://${this.ip}${openCgi}`, { method: 'GET', headers: this.headers }, timeout);
         if(httpResp.ok) {
-          resp.response.data = 'opened';
+          resp.response.data = 'ok';
           return resp;
         } else throw new Error(`OPEN with ID ${oRequest.id} return status ${httpResp.status}`);
       case 'get_sn':
