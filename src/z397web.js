@@ -190,10 +190,6 @@ class ILz397web extends EventEmitter {
 
   _handleReset(oRequest, timeout) {
     return new Promise((resolve, reject) => {
-      // if (!this._tcpClient) {
-      //   return reject(new Error('Cannot reset when not connected via main protocol'));
-      // }
-
       if (this.status === 'connected') {
         this._tcpClient.destroy();
         this._tcpClient = null;
@@ -241,7 +237,9 @@ class ILz397web extends EventEmitter {
 
       telnet.on('error', (err) => {
         cleanup();
-        reject(new Error(`Telnet reset failed: ${err.code || err.message}`));
+        const e = new Error(`Telnet reset failed: ${err.code || err.message}`);
+        this.emit('error', e);
+        reject(e);
       });
 
       telnet.on('close', () => {
@@ -360,10 +358,6 @@ class ILz397web extends EventEmitter {
     let parseError = null;
 
     try {
-      // --- Используем более надежный способ определения типа ответа ---
-      // (Пример: можно создать ключ на основе типа и команды/подтипа)
-      const responseKey = `${iType}-${aPacket[4]}-${aPacket[5]}`; // Пример ключа, нужно адаптировать под реальные различия
-
       if (iType === 0x20 && aPacket[0x04] === 0x00 && aPacket[0x05] === 0x00) {
         // scan
         result.response.addr = null; // У Scan нет адреса контроллера в ответе
