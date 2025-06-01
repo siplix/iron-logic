@@ -6,13 +6,17 @@ const IP = '192.168.14.9';
 const PORT = 1000;
 const KEY = '2B07D1B1';
 
+// const IP = '192.168.14.6';
+// const PORT = 1000;
+// const KEY = '883D9179';
+
 if (DEBUG === 'z397web') {
   const iL = new ILz397web(IP, PORT, KEY);
 
   let id = 0;
   async function iL1run() {
     let resp;
-    let addreses = [];
+    let addresses = [];
     const controllers = new Map();
     debug('STA_01', iL.status);
     if (iL.status === 'disconnected') {
@@ -20,32 +24,33 @@ if (DEBUG === 'z397web') {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR1', err.message);
       }
     }
     debug('STA_02', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'scan' } });
-        addreses = [...resp.responce.data];
+        console.log(resp)
+        addresses = [...resp.response.data];
         debug('SCN', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR2', err.message);
       }
     }
     debug('STA_03', iL.status);
     if (iL.status === 'connected') {
       try {
-        for (addr of addreses) {
+        for (addr of addresses) {
           resp = await iL.get({ id: id++, request: { addr: addr, cmd: 'get_sn' } });
-          controllers.set(addr, { sn: resp.responce.data });
+          controllers.set(addr, { sn: resp.response.data });
           debug('GSN', resp);
         }
         for (let key in controllers) {
           debug('controllers', key, controllers.get(key));
         }
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR3', err.message);
       }
     }
     debug('STA_04', iL.status);
@@ -54,7 +59,7 @@ if (DEBUG === 'z397web') {
         resp = await iL.get({ id: id++, request: { addr: 8, cmd: 'get_sn' } });
         debug('GSN', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR4', err.message);
       }
     }
     debug('STA_05', iL.status);
@@ -63,7 +68,7 @@ if (DEBUG === 'z397web') {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR5', err.message);
       }
     }
     debug('STA_06', iL.status);
@@ -72,16 +77,17 @@ if (DEBUG === 'z397web') {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'set_time' } });
         debug('STM', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR6', err.message);
       }
     }
+    /*
     debug('STA_07', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: 2, cmd: 'get_time' } });
         debug('GTM', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR7', err.message);
       }
     }
     debug('STA_08', iL.status);
@@ -89,7 +95,7 @@ if (DEBUG === 'z397web') {
       resp = await iL.get({ id: id++, request: { addr: null, cmd: 'reset' } });
       debug('RES', resp);
     } catch (err) {
-      debug('ERROR', err.message);
+      debug('ERROR8', err.message);
     }
     debug('STA_09', iL.status);
     if (iL.status === 'disconnected') {
@@ -97,17 +103,27 @@ if (DEBUG === 'z397web') {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'connect' } });
         debug('CON', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR9', err.message);
       }
     }
+      */
     debug('STA_10', iL.status);
     if (iL.status === 'connected') {
       try {
         resp = await iL.get({ id: id++, request: { addr: null, cmd: 'disconnect' } });
         debug('DIS', resp);
       } catch (err) {
-        debug('ERROR', err.message);
+        debug('ERROR10', err.message);
       }
+    }
+  }
+
+  async function iL1reset() {
+    try {
+      resp = await iL.get({ id: id++, request: { addr: null, cmd: 'reset' } });
+      debug('RES', resp);
+    } catch (err) {
+      debug('ERROR', err.message);
     }
   }
 
@@ -118,8 +134,12 @@ if (DEBUG === 'z397web') {
     debug('>>> Global Close Event:', status);
   });
 
-  iL1run();
+  //iL1run();
+  iL1reset();
+
+  
 }
+
 
 if (DEBUG === 'z5rweb') {
   const iL = new ILz5rweb('192.168.14.1', '0ACA3EEE', 3000);

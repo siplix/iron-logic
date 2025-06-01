@@ -1,7 +1,8 @@
 const EventEmitter = require('events');
 const Net = require('net');
 
-const DEFAULT_TIMEOUT = 2000; // Таймаут ожидания ответа в мс
+const DEFAULT_TIMEOUT = 10000; // Таймаут ожидания ответа в мс
+const RECONNECT_INTERVAL = 5000; // Интервал между попытками переподключения в мс
 
 // Класс, обмен данными с конвертером ironLogic Z397-web
 /**
@@ -51,7 +52,8 @@ class ILz397web extends EventEmitter {
     this.key = key;
 
     this.status = 'disconnected';
-    this.enabled = true;
+    this.enabled = false;
+    this._reconnectTimer = null;
 
     this._buffer = [];
     this._rxState = false;
@@ -64,12 +66,19 @@ class ILz397web extends EventEmitter {
   }
 
   async get(oRequest, timeout = DEFAULT_TIMEOUT) {
+    // console.log('[z397web] get ID/cmd:', oRequest.id, oRequest.request.cmd);
     switch (oRequest.request.cmd) {
       case 'connect':
+        this._clearReconnectTimer();
+        this.enabled = true;
         return this._handleConnect(oRequest);
       case 'disconnect':
+        this._clearReconnectTimer();
+        this.enabled = false;
         return this._handleDisconnect(oRequest);
       case 'reset':
+        this._clearReconnectTimer();
+        this.enabled = false;
         return this._handleReset(oRequest, timeout);
       default:
         if (this.status !== 'connected') {
@@ -144,7 +153,6 @@ class ILz397web extends EventEmitter {
         this._init();
         const onInit = (status) => {
           this.off('error', onError);
-          this.enabled = true;
           resolve({ id: oRequest.id, error: null, response: { addr: null, cmd: 'connect', data: status } });
         };
         const onError = (err) => {
@@ -165,7 +173,6 @@ class ILz397web extends EventEmitter {
       if (this.status === 'connected') {
         const onClose = (status) => {
           this.off('error', onError);
-          this.enabled = false;
           this._tcpClient = null;
           resolve({ id: oRequest.id, error: null, response: { addr: null, cmd: 'disconnect', data: status } });
         };
@@ -238,7 +245,11 @@ class ILz397web extends EventEmitter {
       telnet.on('error', (err) => {
         cleanup();
         const e = new Error(`Telnet reset failed: ${err.code || err.message}`);
-        this.emit('error', e);
+        try{
+          this.emit('error', e);
+        } catch (e) {
+          console.log('[z397web]', 'telnet emit error', e);
+        }
         reject(e);
       });
 
@@ -263,29 +274,41 @@ class ILz397web extends EventEmitter {
     });
   }
 
-  _handleOtherCommands(oRequest, timeout) {}
-
   // устанавливает подключение и обрабатывает события связаные с подключением
   _init() {
-    if (this._tcpClient) {
-      try {
-        this._tcpClient.destroy();
-      } catch (e) {
-        /* ignore */
-      }
+    // Если уже есть активное подключение, ничего не делаем
+    if (this._tcpClient && this.status !== 'disconnected') {
+      return;
     }
+
+    this._clearReconnectTimer();
+
+    this.status = 'connecting'; // Устанавливаем статус "подключение"
+    console.log(`[z397web] Attempting to connect to ${this.ip}:${this.port}`);
+
+    // Если клиент уже существует, уничтожаем его, чтобы создать новое соединение
+    if (this._tcpClient) {
+      try { this._tcpClient.destroy(); } catch (e) {};
+      this._tcpClient = null;
+    }
+
     this._tcpClient = new Net.Socket();
+
     // Сброс ожидающих запросов при переподключении
     this._clearPendingRequests(new Error('Connection reset during request'));
 
     this._tcpClient.connect(this.port, this.ip, () => {
-      this.status = 'connecting';
     });
 
     this._tcpClient.on('connect', () => {
       this.status = 'connected';
+      console.log('[z397web] connected');
       this._send(this._msgAdvModeOn); // Отправляем команду включения режима Advanced
-      this.emit('init', this.status); // Сигнал об успешной инициализации
+      try{
+        this.emit('init', this.status); // Сигнал об успешной инициализации
+      } catch (e) {
+        console.log('[z397web]', 'emit init', e);
+      }
     });
 
     this._tcpClient.on('data', (data) => {
@@ -298,30 +321,64 @@ class ILz397web extends EventEmitter {
         if (unpacked && unpacked.packet && this._checkSum(unpacked.packet)) {
           this._handlerReceivedData(unpacked); // Передаем {type, id, packet} дальше
         } else if (unpacked && unpacked.packet) {
-          this.emit('error', new Error(`Checksum error (type: ${unpacked.type}, id: ${unpacked.id})`));
+          try{
+            this.emit('error', new Error(`Checksum error (type: ${unpacked.type}, id: ${unpacked.id})`));
+          } catch (e) {
+            console.log('[z397web]', 'emit error', e);
+          }
         }
       } else if (oPacketData && oPacketData.error) {
         // Если _receivingData вернуло ошибку протокола (тип 0x02)
-        this.emit('error', new Error(`Protocol error: ${oPacketData.error}`));
+        try{
+          this.emit('error', new Error(`Protocol error: ${oPacketData.error}`));
+        } catch (e) {
+          console.log('[z397web]', 'emit error', e);
+        }
       }
     });
 
     this._tcpClient.on('error', (err) => {
+      this._clearReconnectTimer();
+
       this.status = 'disconnected'; // Меняем статус при ошибке
       this._clearPendingRequests(new Error(`Socket error: ${err.code}`)); // Отклоняем все ожидающие запросы
-      this.emit('error', new Error(`Socket error: ${err.code || err.message}`)); // Генерируем ошибку
+      try{
+        this.emit('error', new Error(`Socket error: ${err.code || err.message}`)); // Генерируем ошибку
+      } catch (e) {
+        console.log('[z397web]', 'emit error', e);
+      }
+      if (this.enabled) {
+        console.log(`[z397web] Socket error: ${err.code || err.message}. Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
+        this._reconnectTimer = setTimeout(() => {
+          this._init(); // Повторная попытка инициализации
+        }, RECONNECT_INTERVAL);
+      }
     });
 
     this._tcpClient.on('close', (hadError) => {
       const oldStatus = this.status;
       this.status = 'disconnected';
+
+      this._clearReconnectTimer();
+
       // Очищаем ожидающие запросы только если закрытие не было инициировано Disconnect
       if (!hadError && oldStatus !== 'disconnected') {
         // Проверяем !hadError чтобы не дублировать reject из 'error'
         this._clearPendingRequests(new Error('Connection closed unexpectedly'));
       }
-      this.emit('close', this.status);
+      try{
+        this.emit('close', this.status);
+      } catch (e) {
+         console.log('[z397web]', 'emit close', e);
+      }
       this._tcpClient = null;
+
+      if (this.enabled) {
+        console.log(`[z397web] Connection closed (hadError: ${hadError}). Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
+        this._reconnectTimer = setTimeout(() => {
+          this._init(); // Повторная попытка инициализации
+        }, RECONNECT_INTERVAL);
+      }
     });
   }
 
@@ -333,6 +390,14 @@ class ILz397web extends EventEmitter {
         requestInfo.reject(error); // Отклоняем промис
       }
       this._pendingRequests.clear(); // Очищаем Map
+    }
+  }
+
+  // Сбрасываем таймер переподключения
+  _clearReconnectTimer() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
     }
   }
 
@@ -403,6 +468,7 @@ class ILz397web extends EventEmitter {
       // Если была ошибка парсинга, отклоняем промис
       pendingRequest.reject(parseError);
     } else {
+      // console.log('[z397web] Resp ID/cmd:', result.id, result.response.cmd)
       // Если все хорошо, разрешаем промис
       pendingRequest.resolve(result);
     }
@@ -441,14 +507,15 @@ class ILz397web extends EventEmitter {
   _parseGetTime(data) {
     const addr = data[5];
     try {
-      let time = +new Date(
-        parseInt('20' + data[0x0e].toString(16), 10), // Год
-        parseInt(data[0x0d].toString(16), 10) - 1, // Месяцы 0-11
-        parseInt(data[0x0c].toString(16), 10), // День месяца
-        parseInt(data[0x0a].toString(16), 10), // Часы (был 0x0a)
-        parseInt(data[0x09].toString(16), 10), // Минуты (был 0x09)
-        parseInt(data[0x08].toString(16), 10) // Секунды (был 0x08)
-      ) / 1000;
+      let time =
+        +new Date(
+          parseInt('20' + data[0x0e].toString(16), 10), // Год
+          parseInt(data[0x0d].toString(16), 10) - 1, // Месяцы 0-11
+          parseInt(data[0x0c].toString(16), 10), // День месяца
+          parseInt(data[0x0a].toString(16), 10), // Часы (был 0x0a)
+          parseInt(data[0x09].toString(16), 10), // Минуты (был 0x09)
+          parseInt(data[0x08].toString(16), 10) // Секунды (был 0x08)
+        ) / 1000;
       if (isNaN(time)) {
         return { addr: addr, data: time, error: 'Invalid date components' };
       }
@@ -642,6 +709,7 @@ class ILz397web extends EventEmitter {
     }
 
     iId = outPacket[3];
+    // console.log('[ <= ] Type:', iType.toString(16).padStart(2, '0'), outPacket.map(num => num.toString(16).padStart(2, '0')));
     return { type: iType, id: iId, packet: outPacket };
   }
 
@@ -679,6 +747,7 @@ class ILz397web extends EventEmitter {
     // 3. Паддинг до кратной 4 байтам длины
     while (packet.length % 4 != 0) packet.push(0);
 
+    // console.log('[ => ] Type:', iType.toString(16).padStart(2, '0'), packet.map(num => num.toString(16).padStart(2, '0')));
     // 4. Упаковываем (_packing)
     let packedData = this._packing(packet);
 
