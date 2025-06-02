@@ -2,7 +2,7 @@ const EventEmitter = require('events');
 const Net = require('net');
 
 const DEFAULT_TIMEOUT = 10000; // Таймаут ожидания ответа в мс
-const RECONNECT_INTERVAL = 5000; // Интервал между попытками переподключения в мс
+// const RECONNECT_INTERVAL = 5000; // Интервал между попытками переподключения в мс
 
 // Класс, обмен данными с конвертером ironLogic Z397-web
 /**
@@ -53,7 +53,7 @@ class ILz397web extends EventEmitter {
 
     this.status = 'disconnected';
     this.enabled = false;
-    this._reconnectTimer = null;
+    // this._reconnectTimer = null;
 
     this._buffer = [];
     this._rxState = false;
@@ -69,15 +69,15 @@ class ILz397web extends EventEmitter {
     // console.log('[z397web] get ID/cmd:', oRequest.id, oRequest.request.cmd);
     switch (oRequest.request.cmd) {
       case 'connect':
-        this._clearReconnectTimer();
+        // this._clearReconnectTimer();
         this.enabled = true;
         return this._handleConnect(oRequest);
       case 'disconnect':
-        this._clearReconnectTimer();
+        // this._clearReconnectTimer();
         this.enabled = false;
         return this._handleDisconnect(oRequest);
       case 'reset':
-        this._clearReconnectTimer();
+        // this._clearReconnectTimer();
         this.enabled = false;
         return this._handleReset(oRequest, timeout);
       default:
@@ -281,7 +281,7 @@ class ILz397web extends EventEmitter {
       return;
     }
 
-    this._clearReconnectTimer();
+    // this._clearReconnectTimer();
 
     this.status = 'connecting'; // Устанавливаем статус "подключение"
     console.log(`[z397web] Attempting to connect to ${this.ip}:${this.port}`);
@@ -338,7 +338,7 @@ class ILz397web extends EventEmitter {
     });
 
     this._tcpClient.on('error', (err) => {
-      this._clearReconnectTimer();
+      // this._clearReconnectTimer();
 
       this.status = 'disconnected'; // Меняем статус при ошибке
       this._clearPendingRequests(new Error(`Socket error: ${err.code}`)); // Отклоняем все ожидающие запросы
@@ -347,19 +347,19 @@ class ILz397web extends EventEmitter {
       } catch (e) {
         console.log('[z397web]', 'emit error', e);
       }
-      if (this.enabled) {
-        console.log(`[z397web] Socket error: ${err.code || err.message}. Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
-        this._reconnectTimer = setTimeout(() => {
-          this._init(); // Повторная попытка инициализации
-        }, RECONNECT_INTERVAL);
-      }
+      // if (this.enabled) {
+      //   console.log(`[z397web] Socket error: ${err.code || err.message}. Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
+      //   this._reconnectTimer = setTimeout(() => {
+      //     this._init(); // Повторная попытка инициализации
+      //   }, RECONNECT_INTERVAL);
+      // }
     });
 
     this._tcpClient.on('close', (hadError) => {
       const oldStatus = this.status;
       this.status = 'disconnected';
 
-      this._clearReconnectTimer();
+      // this._clearReconnectTimer();
 
       // Очищаем ожидающие запросы только если закрытие не было инициировано Disconnect
       if (!hadError && oldStatus !== 'disconnected') {
@@ -373,12 +373,12 @@ class ILz397web extends EventEmitter {
       }
       this._tcpClient = null;
 
-      if (this.enabled) {
-        console.log(`[z397web] Connection closed (hadError: ${hadError}). Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
-        this._reconnectTimer = setTimeout(() => {
-          this._init(); // Повторная попытка инициализации
-        }, RECONNECT_INTERVAL);
-      }
+      // if (this.enabled) {
+      //   console.log(`[z397web] Connection closed (hadError: ${hadError}). Attempting reconnect in ${RECONNECT_INTERVAL}ms...`);
+      //   this._reconnectTimer = setTimeout(() => {
+      //     this._init(); // Повторная попытка инициализации
+      //   }, RECONNECT_INTERVAL);
+      // }
     });
   }
 
@@ -394,12 +394,12 @@ class ILz397web extends EventEmitter {
   }
 
   // Сбрасываем таймер переподключения
-  _clearReconnectTimer() {
-    if (this._reconnectTimer) {
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = null;
-    }
-  }
+  // _clearReconnectTimer() {
+  //   if (this._reconnectTimer) {
+  //     clearTimeout(this._reconnectTimer);
+  //     this._reconnectTimer = null;
+  //   }
+  // }
 
   _handlerReceivedData(oData) {
     // oData = { type: iType, id: iId, packet: [] }
