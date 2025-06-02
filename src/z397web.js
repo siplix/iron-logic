@@ -314,7 +314,7 @@ class ILz397web extends EventEmitter {
     this._tcpClient.on('data', (data) => {
       // Получаем объект { type, id, packet } или null при ошибке разбора/протокола
       let oPacketData = this._receivingData(data); // Получаем {type, id: null, packet}
-
+      
       if (oPacketData && oPacketData.packet && oPacketData.packet.length > 0) {
         // Распаковываем и проверяем контрольную сумму
         let unpacked = this._unpacking(oPacketData); // Получаем {type, id, packet} с ID!
@@ -322,7 +322,7 @@ class ILz397web extends EventEmitter {
           this._handlerReceivedData(unpacked); // Передаем {type, id, packet} дальше
         } else if (unpacked && unpacked.packet) {
           try{
-            this.emit('error', new Error(`Checksum error (type: ${unpacked.type}, id: ${unpacked.id})`));
+            this.emit('error', new Error(`Checksum error (type: ${unpacked.type}, id: ${unpacked.id}) Packet: ${arrToHexStr(unpacked.packet)}`));
           } catch (e) {
             console.log('[z397web]', 'emit error', e);
           }
@@ -786,5 +786,16 @@ class ILz397web extends EventEmitter {
     }
   }
 } // Конец класса
+
+function arrToHexStr(numbers) {
+    if (!numbers.every(num => num >= 0 && num <= 255)) {
+        throw new Error('[arrToHexStr] Все числа должны быть в диапазоне от 0 до 255');
+    }
+    const hexArray = numbers.map(num => {
+        const hex = num.toString(16).padStart(2, '0');
+        return `0x${hex}`;
+    });
+    return hexArray.join(' ');
+}
 
 module.exports = ILz397web;
